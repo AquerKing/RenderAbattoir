@@ -33,6 +33,12 @@ VertexDataResult validateVertexData(VertexData data) {
     const std::size_t expectedValues = data.vertexCount * data.componentsPerVertex();
     if (data.values.size() != expectedValues)
         return {false, "Vertex value count does not match the attribute layout.", {}};
+    if (data.indices.empty())
+        return {false, "At least one vertex index is required.", {}};
+    for (std::size_t i = 0; i < data.indices.size(); ++i) {
+        if (data.indices[i] >= data.vertexCount)
+            return {false, "Vertex index " + std::to_string(i) + " is out of range.", {}};
+    }
     return {true, "Vertex data is valid.", std::move(data)};
 }
 
@@ -76,6 +82,15 @@ VertexDataResult loadVertexDataFile(const std::string& path) {
                 return {false, "Vertex component count mismatch at line " +
                                    std::to_string(lineNumber) + ".", {}};
             ++data.vertexCount;
+        } else if (keyword == "index") {
+            std::uint32_t index = 0;
+            bool hasIndex = false;
+            while (stream >> index) {
+                data.indices.push_back(index);
+                hasIndex = true;
+            }
+            if (!hasIndex)
+                return {false, "Invalid index at line " + std::to_string(lineNumber) + ".", {}};
         } else {
             return {false, "Unknown vertex data directive at line " +
                                std::to_string(lineNumber) + ": " + keyword, {}};

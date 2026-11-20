@@ -36,7 +36,8 @@ public:
 private:
     unsigned int vertexArray_ = 0;
     unsigned int vertexBuffer_ = 0;
-    int vertexCount_ = 0;
+    unsigned int indexBuffer_ = 0;
+    int indexCount_ = 0;
 };
 
 } // namespace render

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@ struct VertexAttribute {
 struct VertexData {
     std::vector<VertexAttribute> attributes;
     std::vector<float> values;
+    std::vector<std::uint32_t> indices;
     std::size_t vertexCount = 0;
 
     std::size_t componentsPerVertex() const;

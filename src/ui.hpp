@@ -402,6 +402,36 @@ private:
         }
         ImGui::EndDisabled();
 
+        ImGui::TextUnformatted("Indices");
+        ImGui::PushID("index-list");
+        if (ImGui::BeginChild("##items", ImVec2(0.0f, 140.0f), ImGuiChildFlags_FrameStyle,
+                              ImGuiWindowFlags_HorizontalScrollbar)) {
+            for (std::size_t i = 0; i < vertexData_.indices.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                int index = static_cast<int>(vertexData_.indices[i]);
+                ImGui::SetNextItemWidth(120.0f);
+                if (ImGui::InputInt("Vertex", &index)) {
+                    vertexData_.indices[i] = static_cast<std::uint32_t>(std::max(index, 0));
+                    vertexDataDirty_ = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove##index")) {
+                    vertexData_.indices.erase(
+                        vertexData_.indices.begin() + static_cast<std::ptrdiff_t>(i));
+                    vertexDataDirty_ = true;
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopID();
+        if (ImGui::Button("Add Index")) {
+            vertexData_.indices.push_back(0);
+            vertexDataDirty_ = true;
+        }
+
         const render::VertexDataResult validation = render::validateVertexData(vertexData_);
         ImGui::BeginDisabled(!vertexDataDirty_ || !validation.success);
         if (ImGui::Button("Apply Vertex Data"))
@@ -486,6 +516,14 @@ private:
         const std::size_t stride = vertexData_.componentsPerVertex();
         const auto begin = vertexData_.values.begin() + static_cast<std::ptrdiff_t>(vertex * stride);
         vertexData_.values.erase(begin, begin + static_cast<std::ptrdiff_t>(stride));
+        std::vector<std::uint32_t> indices;
+        indices.reserve(vertexData_.indices.size());
+        for (std::uint32_t index : vertexData_.indices) {
+            if (index == vertex)
+                continue;
+            indices.push_back(index > vertex ? index - 1 : index);
+        }
+        vertexData_.indices = std::move(indices);
         --vertexData_.vertexCount;
     }
 

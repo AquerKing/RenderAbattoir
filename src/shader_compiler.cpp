@@ -111,9 +111,12 @@ VertexDataResult OpenGLViewportRenderer::upload(const VertexData& data) {
 
     GLuint newVertexArray = 0;
     GLuint newVertexBuffer = 0;
+    GLuint newIndexBuffer = 0;
     glGenVertexArrays(1, &newVertexArray);
     glGenBuffers(1, &newVertexBuffer);
-    if (newVertexArray == 0 || newVertexBuffer == 0) {
+    glGenBuffers(1, &newIndexBuffer);
+    if (newVertexArray == 0 || newVertexBuffer == 0 || newIndexBuffer == 0) {
+        if (newIndexBuffer != 0) glDeleteBuffers(1, &newIndexBuffer);
         if (newVertexBuffer != 0) glDeleteBuffers(1, &newVertexBuffer);
         if (newVertexArray != 0) glDeleteVertexArrays(1, &newVertexArray);
         return {false, "Failed to allocate OpenGL vertex resources.", {}};
@@ -134,16 +137,21 @@ VertexDataResult OpenGLViewportRenderer::upload(const VertexData& data) {
                               reinterpret_cast<const void*>(componentOffset * sizeof(float)));
         componentOffset += static_cast<std::size_t>(attribute.componentCount);
     }
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, newIndexBuffer);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(validation.data.indices.size() * sizeof(std::uint32_t)),
+                 validation.data.indices.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
     reset();
     vertexArray_ = newVertexArray;
     vertexBuffer_ = newVertexBuffer;
-    vertexCount_ = static_cast<int>(validation.data.vertexCount);
-    validation.message = "Uploaded " + std::to_string(vertexCount_) +
-                         " vertices with " + std::to_string(validation.data.attributes.size()) +
-                         " attributes.";
+    indexBuffer_ = newIndexBuffer;
+    indexCount_ = static_cast<int>(validation.data.indices.size());
+    validation.message = "Uploaded " + std::to_string(validation.data.vertexCount) +
+                         " vertices, " + std::to_string(indexCount_) + " indices, and " +
+                         std::to_string(validation.data.attributes.size()) + " attributes.";
     return validation;
 }
 
@@ -161,7 +169,7 @@ void OpenGLViewportRenderer::render(
     if (program != 0 && vertexArray_ != 0) {
         glUseProgram(program);
         glBindVertexArray(vertexArray_);
-        glDrawArrays(GL_TRIANGLES, 0, vertexCount_);
+        glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
         glBindVertexArray(0);
         glUseProgram(0);
     }
@@ -177,7 +185,11 @@ void OpenGLViewportRenderer::reset() {
         glDeleteVertexArrays(1, &vertexArray_);
         vertexArray_ = 0;
     }
-    vertexCount_ = 0;
+    if (indexBuffer_ != 0) {
+        glDeleteBuffers(1, &indexBuffer_);
+        indexBuffer_ = 0;
+    }
+    indexCount_ = 0;
 }
 
 } // namespace render
