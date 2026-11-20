@@ -265,9 +265,11 @@ private:
 
 class RenderSettings final : public Component {
 public:
-    RenderSettings(render::OpenGLShaderCompiler& compiler, logsys::Logger& logger,
+    RenderSettings(render::OpenGLShaderCompiler& compiler, render::OpenGLViewportRenderer& renderer,
+                   logsys::Logger& logger,
                    std::function<void(bool)> onVsyncChanged)
-        : compiler_(compiler), logger_(logger), onVsyncChanged_(std::move(onVsyncChanged)) {}
+        : compiler_(compiler), renderer_(renderer), logger_(logger),
+          onVsyncChanged_(std::move(onVsyncChanged)) {}
 
     void draw() override {
         ImGui::TextUnformatted("Shader Program");
@@ -291,6 +293,9 @@ public:
         ImGui::EndDisabled();
 
         ImGui::Spacing();
+        drawVertexData();
+
+        ImGui::Spacing();
         ImGui::TextUnformatted("Rendering");
         ImGui::Separator();
         if (ImGui::BeginCombo("Rendering API", "OpenGL")) {
@@ -302,6 +307,210 @@ public:
     }
 
 private:
+    void drawVertexData() {
+        ImGui::TextUnformatted("Vertex Data");
+        ImGui::Separator();
+        ImGui::TextUnformatted("Data File");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##vertex-data-path", vertexDataPath_.data(), vertexDataPath_.size());
+        ImGui::BeginDisabled(vertexDataPath_[0] == '\0');
+        if (ImGui::Button("Load Vertex Data"))
+            loadVertexData();
+        ImGui::EndDisabled();
+
+        ImGui::TextUnformatted("Attributes");
+        ImGui::PushID("attribute-list");
+        if (ImGui::BeginChild("##items", ImVec2(0.0f, 140.0f), ImGuiChildFlags_FrameStyle,
+                              ImGuiWindowFlags_HorizontalScrollbar)) {
+            for (std::size_t i = 0; i < vertexData_.attributes.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                render::VertexAttribute& attribute = vertexData_.attributes[i];
+                ImGui::SetNextItemWidth(90.0f);
+                if (ImGui::InputInt("Location", &attribute.location)) {
+                    attribute.location = std::max(attribute.location, 0);
+                    vertexDataDirty_ = true;
+                }
+                ImGui::SameLine();
+                int components = attribute.componentCount;
+                ImGui::SetNextItemWidth(90.0f);
+                if (ImGui::InputInt("Components", &components)) {
+                    resizeAttribute(i, std::clamp(components, 1, 4));
+                    vertexDataDirty_ = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove##attribute")) {
+                    removeAttribute(i);
+                    vertexDataDirty_ = true;
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopID();
+        if (ImGui::Button("Add Attribute")) {
+            addAttribute();
+            vertexDataDirty_ = true;
+        }
+
+        ImGui::TextUnformatted("Vertices");
+        const std::size_t stride = vertexData_.componentsPerVertex();
+        ImGui::PushID("vertex-list");
+        ImGui::PushID(static_cast<int>(vertexDataRevision_));
+        if (ImGui::BeginChild("##items", ImVec2(0.0f, 240.0f), ImGuiChildFlags_FrameStyle,
+                              ImGuiWindowFlags_HorizontalScrollbar)) {
+            for (std::size_t vertex = 0; vertex < vertexData_.vertexCount && stride > 0; ++vertex) {
+                ImGui::PushID(static_cast<int>(vertex));
+                const std::string vertexLabel = "Vertex " + std::to_string(vertex);
+                ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+                const bool open = ImGui::TreeNode(vertexLabel.c_str());
+                ImGui::SameLine();
+                const bool remove = ImGui::SmallButton("Remove##vertex");
+                if (open) {
+                    std::size_t offset = vertex * stride;
+                    for (std::size_t attributeIndex = 0;
+                         attributeIndex < vertexData_.attributes.size(); ++attributeIndex) {
+                        const render::VertexAttribute& attribute = vertexData_.attributes[attributeIndex];
+                        ImGui::PushID(static_cast<int>(attributeIndex));
+                        const std::string label = "Location " + std::to_string(attribute.location);
+                        if (inputFloatComponents(label.c_str(), vertexData_.values.data() + offset,
+                                                 attribute.componentCount))
+                            vertexDataDirty_ = true;
+                        offset += static_cast<std::size_t>(attribute.componentCount);
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
+                if (remove) {
+                    removeVertex(vertex);
+                    vertexDataDirty_ = true;
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopID();
+        ImGui::PopID();
+        ImGui::BeginDisabled(stride == 0);
+        if (ImGui::Button("Add Vertex")) {
+            vertexData_.values.resize(vertexData_.values.size() + stride, 0.0f);
+            ++vertexData_.vertexCount;
+            vertexDataDirty_ = true;
+        }
+        ImGui::EndDisabled();
+
+        const render::VertexDataResult validation = render::validateVertexData(vertexData_);
+        ImGui::BeginDisabled(!vertexDataDirty_ || !validation.success);
+        if (ImGui::Button("Apply Vertex Data"))
+            uploadVertexData();
+        ImGui::EndDisabled();
+    }
+
+    static bool inputFloatComponents(const char* label, float* values, int count) {
+        switch (count) {
+        case 1: return ImGui::InputFloat(label, values);
+        case 2: return ImGui::InputFloat2(label, values);
+        case 3: return ImGui::InputFloat3(label, values);
+        case 4: return ImGui::InputFloat4(label, values);
+        default: return false;
+        }
+    }
+
+    void addAttribute() {
+        int location = 0;
+        for (const render::VertexAttribute& attribute : vertexData_.attributes)
+            location = std::max(location, attribute.location + 1);
+        const std::size_t oldStride = vertexData_.componentsPerVertex();
+        std::vector<float> values;
+        values.reserve(vertexData_.vertexCount * (oldStride + 3));
+        for (std::size_t vertex = 0; vertex < vertexData_.vertexCount; ++vertex) {
+            const auto begin = vertexData_.values.begin() + static_cast<std::ptrdiff_t>(vertex * oldStride);
+            values.insert(values.end(), begin, begin + static_cast<std::ptrdiff_t>(oldStride));
+            values.insert(values.end(), 3, 0.0f);
+        }
+        vertexData_.attributes.push_back({location, 3});
+        vertexData_.values = std::move(values);
+    }
+
+    void resizeAttribute(std::size_t index, int components) {
+        const int oldComponents = vertexData_.attributes[index].componentCount;
+        if (oldComponents == components)
+            return;
+        const std::size_t oldStride = vertexData_.componentsPerVertex();
+        std::size_t attributeOffset = 0;
+        for (std::size_t i = 0; i < index; ++i)
+            attributeOffset += static_cast<std::size_t>(vertexData_.attributes[i].componentCount);
+        std::vector<float> values;
+        values.reserve(vertexData_.vertexCount * (oldStride - oldComponents + components));
+        for (std::size_t vertex = 0; vertex < vertexData_.vertexCount; ++vertex) {
+            const std::size_t row = vertex * oldStride;
+            values.insert(values.end(), vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row),
+                          vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row + attributeOffset));
+            const int copied = std::min(oldComponents, components);
+            values.insert(values.end(),
+                          vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row + attributeOffset),
+                          vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row + attributeOffset + copied));
+            values.insert(values.end(), components - copied, 0.0f);
+            values.insert(values.end(),
+                          vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row + attributeOffset + oldComponents),
+                          vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row + oldStride));
+        }
+        vertexData_.attributes[index].componentCount = components;
+        vertexData_.values = std::move(values);
+    }
+
+    void removeAttribute(std::size_t index) {
+        const std::size_t oldStride = vertexData_.componentsPerVertex();
+        std::size_t offset = 0;
+        for (std::size_t i = 0; i < index; ++i)
+            offset += static_cast<std::size_t>(vertexData_.attributes[i].componentCount);
+        const std::size_t removed = static_cast<std::size_t>(vertexData_.attributes[index].componentCount);
+        std::vector<float> values;
+        values.reserve(vertexData_.vertexCount * (oldStride - removed));
+        for (std::size_t vertex = 0; vertex < vertexData_.vertexCount; ++vertex) {
+            const std::size_t row = vertex * oldStride;
+            values.insert(values.end(), vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row),
+                          vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row + offset));
+            values.insert(values.end(),
+                          vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row + offset + removed),
+                          vertexData_.values.begin() + static_cast<std::ptrdiff_t>(row + oldStride));
+        }
+        vertexData_.attributes.erase(vertexData_.attributes.begin() + static_cast<std::ptrdiff_t>(index));
+        vertexData_.values = std::move(values);
+    }
+
+    void removeVertex(std::size_t vertex) {
+        const std::size_t stride = vertexData_.componentsPerVertex();
+        const auto begin = vertexData_.values.begin() + static_cast<std::ptrdiff_t>(vertex * stride);
+        vertexData_.values.erase(begin, begin + static_cast<std::ptrdiff_t>(stride));
+        --vertexData_.vertexCount;
+    }
+
+    void loadVertexData() {
+        render::VertexDataResult result = render::loadVertexDataFile(vertexDataPath_.data());
+        if (result.success) {
+            vertexData_ = std::move(result.data);
+            vertexDataDirty_ = true;
+            ++vertexDataRevision_;
+            logger_.info("FileLoading", result.message);
+        } else {
+            logger_.error("FileLoading", result.message);
+        }
+    }
+
+    void uploadVertexData() {
+        const render::VertexDataResult result = renderer_.upload(vertexData_);
+        if (result.success) {
+            vertexDataDirty_ = false;
+            logger_.info("VertexData", result.message);
+        } else {
+            logger_.error("VertexData", result.message);
+        }
+    }
+
     static bool readFile(const char* path, std::string& contents) {
         if (path[0] == '\0') {
             contents.clear();
@@ -336,10 +545,12 @@ private:
     }
 
     render::OpenGLShaderCompiler& compiler_;
+    render::OpenGLViewportRenderer& renderer_;
     logsys::Logger& logger_;
     std::function<void(bool)> onVsyncChanged_;
     std::array<char, 1024> vertexPath_{};
     std::array<char, 1024> fragmentPath_{};
+    std::array<char, 1024> vertexDataPath_{};
     std::string vertexSource_;
     std::string fragmentSource_;
     std::string attemptedVertexPath_;
@@ -349,6 +560,9 @@ private:
     bool vertexLoaded_ = false;
     bool fragmentLoaded_ = false;
     bool hasAttempt_ = false;
+    render::VertexData vertexData_;
+    bool vertexDataDirty_ = false;
+    std::uint64_t vertexDataRevision_ = 0;
     bool vsyncEnabled_ = true;
 };
 

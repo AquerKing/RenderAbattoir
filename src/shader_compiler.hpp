@@ -3,6 +3,8 @@
 #include <string>
 #include <string_view>
 
+#include "vertex_data.hpp"
+
 namespace render {
 
 struct ShaderCompileResult {
@@ -27,12 +29,14 @@ private:
 class OpenGLViewportRenderer {
 public:
     bool initialize();
+    VertexDataResult upload(const VertexData& data);
     void render(unsigned int program, int x, int y, int width, int height);
     void reset();
 
 private:
     unsigned int vertexArray_ = 0;
     unsigned int vertexBuffer_ = 0;
+    int vertexCount_ = 0;
 };
 
 } // namespace render

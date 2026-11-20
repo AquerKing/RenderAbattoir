@@ -16,6 +16,7 @@ add_executable(
     # Source files
     "src/main.cpp"
     "src/shader_compiler.cpp"
+    "src/vertex_data.cpp"
     "${IMGUI_DIR}/imgui.cpp"
     "${IMGUI_DIR}/imgui_draw.cpp"
     "${IMGUI_DIR}/imgui_tables.cpp"

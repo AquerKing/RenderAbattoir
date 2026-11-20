@@ -67,6 +67,8 @@ int main()
     logger.registerChannel("FileLoading");
     logger.registerChannel("ShaderCompilation");
     logger.registerChannel("ShaderParameters");
+    logger.registerChannel("VertexData");
+    logger.registerChannel("Rendering");
     logger.info("FileLoading", "Log system initialized; no resources have been loaded yet.");
     logger.warning("ShaderCompilation", "No shader program is selected for compilation.");
     logger.info("ShaderParameters", "No shader parameters have been applied.");
@@ -91,7 +93,7 @@ int main()
     });
 
     ui::Window settingsWindow("Render Settings");
-    settingsWindow.add<ui::RenderSettings>(shaderCompiler, logger,
+    settingsWindow.add<ui::RenderSettings>(shaderCompiler, viewportRenderer, logger,
         [](bool enabled) { glfwSwapInterval(enabled ? 1 : 0); });
 
     ui::Window viewportWindow("Viewport");
