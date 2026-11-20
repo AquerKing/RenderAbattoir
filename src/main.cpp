@@ -42,28 +42,39 @@ int main()
     std::vector<bool> selectedChannels{true, false, false};
     ui::DockSpace dockSpace;
 
-    ui::Window controlsWindow("Controls");
-    auto& controls = controlsWindow.add<ui::VerticalLayout>();
-    controls.add<ui::Text>("A small reusable ImGui component demo");
-    controls.add<ui::Separator>();
-    controls.add<ui::InputText>("Shader name", "basic.vert");
-    controls.add<ui::Checkbox>("Enable VSync", true);
-    controls.add<ui::RadioButton>("OpenGL", selectedRenderer, 0);
-    controls.add<ui::RadioButton>("Vulkan", selectedRenderer, 1);
-    controls.add<ui::ComboBox>("Renderer", std::vector<std::string>{"OpenGL", "Vulkan", "Software"}, &selectedRenderer);
-    controls.add<ui::ComboBox>("Channels", std::vector<std::string>{"Color", "Depth", "Normals"}, &selectedChannels);
-
-    ui::Window sceneWindow("Scene");
-    sceneWindow.add<ui::TreeView>(std::vector<ui::TreeView::Node>{
-        {"Scene", {{"Camera", {}}, {"Mesh", {}}}},
-        {"Shaders", {{"Vertex", {}}, {"Fragment", {}}}},
+    ui::Window resourcesWindow("Resources");
+    auto& resources = resourcesWindow.add<ui::VerticalLayout>();
+    resources.add<ui::Text>("Loaded resources");
+    resources.add<ui::Separator>();
+    resources.add<ui::TreeView>(std::vector<ui::TreeView::Node>{
+        {"Textures", {{"albedo.png", {}}, {"normal.png", {}}}},
+        {"Meshes", {{"model.obj", {}}, {"sphere.gltf", {}}}},
     });
-    sceneWindow.add<ui::ListView>("Render targets", std::vector<std::string>{"Color", "Depth", "Normals"}, &selectedItem);
+
+    ui::Window settingsWindow("Render Settings");
+    auto& settings = settingsWindow.add<ui::VerticalLayout>();
+    settings.add<ui::Text>("Renderer and shader parameters");
+    settings.add<ui::Separator>();
+    settings.add<ui::InputText>("Shader name", "basic.vert");
+    settings.add<ui::Checkbox>("Enable VSync", true);
+    settings.add<ui::RadioButton>("OpenGL", selectedRenderer, 0);
+    settings.add<ui::RadioButton>("Vulkan", selectedRenderer, 1);
+    settings.add<ui::ComboBox>("Renderer", std::vector<std::string>{"OpenGL", "Vulkan", "Software"}, &selectedRenderer);
+    settings.add<ui::ComboBox>("Channels", std::vector<std::string>{"Color", "Depth", "Normals"}, &selectedChannels);
 
     ui::Window viewportWindow("Viewport");
     viewportWindow.add<ui::RenderViewport>("Viewport Canvas", [](ImVec2) {
         ImGui::TextUnformatted("Render viewport placeholder");
     });
+
+    ui::Window outputWindow("Output");
+    outputWindow.add<ui::Text>("Build and runtime messages");
+    outputWindow.add<ui::Separator>();
+    outputWindow.add<ui::Text>("[Info] Renderer initialized.");
+    outputWindow.add<ui::Text>("[Info] Awaiting shader compilation.");
+    outputWindow.add<ui::ListView>("Recent results", std::vector<std::string>{"Shader compile: pending", "Scene load: pending", "Frame capture: idle"}, &selectedItem);
+
+    bool defaultLayoutBuilt = false;
 
     while (!glfwWindowShouldClose(window))
     {
@@ -74,9 +85,14 @@ int main()
         ImGui::NewFrame();
 
         dockSpace.draw();
-        controlsWindow.setInitialDock(dockSpace.id()).draw();
-        sceneWindow.setInitialDock(dockSpace.id()).draw();
-        viewportWindow.setInitialDock(dockSpace.id()).draw();
+        if (!defaultLayoutBuilt) {
+            ui::DefaultDockLayout::buildHLayout(dockSpace.id(), "Resources", "Render Settings", "Viewport", "Output");
+            defaultLayoutBuilt = true;
+        }
+        resourcesWindow.draw();
+        settingsWindow.draw();
+        viewportWindow.draw();
+        outputWindow.draw();
 
         ImGui::Render();
         int displayWidth = 0;

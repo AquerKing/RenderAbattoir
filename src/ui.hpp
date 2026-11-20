@@ -1,6 +1,7 @@
 #pragma once
 
 #include "imgui.h"
+#include "imgui_internal.h" // DockBuilder currently lives in Dear ImGui's docking internals.
 
 #include <array>
 #include <functional>
@@ -54,6 +55,29 @@ public:
 private:
     ImGuiDockNodeFlags flags_;
     ImGuiID id_ = 0;
+};
+
+// Builds a persistent default docking layout the first time an application is
+// started. Existing user layouts are left untouched by the caller.
+class DefaultDockLayout {
+public:
+    static void buildHLayout(ImGuiID rootId, const char* leftWindow, const char* rightWindow,
+                             const char* upperCenterWindow, const char* lowerCenterWindow) {
+        ImGui::DockBuilderRemoveNode(rootId);
+        ImGui::DockBuilderAddNode(rootId, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(rootId, ImGui::GetMainViewport()->Size);
+
+        ImGuiID centerId = rootId;
+        ImGuiID leftId = ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Left, 0.22f, nullptr, &centerId);
+        ImGuiID rightId = ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Right, 0.25f, nullptr, &centerId);
+        ImGuiID lowerId = ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Down, 0.30f, nullptr, &centerId);
+
+        ImGui::DockBuilderDockWindow(leftWindow, leftId);
+        ImGui::DockBuilderDockWindow(rightWindow, rightId);
+        ImGui::DockBuilderDockWindow(upperCenterWindow, centerId);
+        ImGui::DockBuilderDockWindow(lowerCenterWindow, lowerId);
+        ImGui::DockBuilderFinish(rootId);
+    }
 };
 
 class Text final : public Component {
