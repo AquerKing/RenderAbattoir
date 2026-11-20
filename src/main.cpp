@@ -37,6 +37,14 @@ int main()
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 410");
 
+    auto& logger = logsys::Logger::instance();
+    logger.registerChannel("FileLoading");
+    logger.registerChannel("ShaderCompilation");
+    logger.registerChannel("ShaderParameters");
+    logger.info("FileLoading", "Log system initialized; no resources have been loaded yet.");
+    logger.warning("ShaderCompilation", "No shader program is selected for compilation.");
+    logger.info("ShaderParameters", "No shader parameters have been applied.");
+
     int selectedRenderer = 0;
     int selectedItem = 0;
     std::vector<bool> selectedChannels{true, false, false};
@@ -68,11 +76,7 @@ int main()
     });
 
     ui::Window outputWindow("Output");
-    outputWindow.add<ui::Text>("Build and runtime messages");
-    outputWindow.add<ui::Separator>();
-    outputWindow.add<ui::Text>("[Info] Renderer initialized.");
-    outputWindow.add<ui::Text>("[Info] Awaiting shader compilation.");
-    outputWindow.add<ui::ListView>("Recent results", std::vector<std::string>{"Shader compile: pending", "Scene load: pending", "Frame capture: idle"}, &selectedItem);
+    outputWindow.add<ui::LogView>(logger);
 
     bool defaultLayoutBuilt = false;
 

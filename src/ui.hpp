@@ -2,11 +2,15 @@
 
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder currently lives in Dear ImGui's docking internals.
+#include "log.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cfloat>
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -233,6 +237,66 @@ public:
 private:
     std::string label_;
     DrawCallback callback_;
+};
+
+// A read-only, scrollable log editor. A Child window is used instead of
+// InputTextMultiline because ImGui's text input cannot color individual lines.
+class LogView final : public Component {
+public:
+    explicit LogView(logsys::Logger& logger, float height = 0.0f)
+        : logger_(logger), height_(height) {}
+
+    void draw() override {
+        // Channel controls are kept in the view, so producers never need to
+        // know which messages the user has chosen to hide.
+        const auto channels = logger_.channels();
+        for (std::size_t i = 0; i < channels.size(); ++i) {
+            const auto& channel = channels[i];
+            auto [it, inserted] = visibleChannels_.try_emplace(channel, true);
+            if (i != 0)
+                ImGui::SameLine();
+            ImGui::Checkbox(channel.c_str(), &it->second);
+        }
+        ImGui::Separator();
+
+        const float viewHeight = height_ > 0.0f ? height_ : ImGui::GetContentRegionAvail().y;
+        ImGui::BeginChild("##log-editor", ImVec2(0.0f, viewHeight), true, ImGuiWindowFlags_HorizontalScrollbar);
+        const bool atBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
+        const auto entries = logger_.entries();
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            const auto& entry = entries[i];
+            if (!visibleChannels_[entry.channel])
+                continue;
+
+            // ReadOnly InputTextMultiline provides a real caret and native
+            // text selection while the per-entry color preserves log levels.
+            std::string line = "[" + entry.channel + "] " + entry.message;
+            const float lineCount = 1.0f + static_cast<float>(std::count(line.begin(), line.end(), '\n'));
+            ImGui::PushStyleColor(ImGuiCol_Text, colorFor(entry.level));
+            ImGui::InputTextMultiline(("##log-entry-" + std::to_string(i)).c_str(),
+                                      line.data(), line.size() + 1,
+                                      ImVec2(-FLT_MIN, lineCount * ImGui::GetTextLineHeightWithSpacing()),
+                                      ImGuiInputTextFlags_ReadOnly);
+            ImGui::PopStyleColor();
+        }
+        if (atBottom)
+            ImGui::SetScrollHereY(1.0f);
+        ImGui::EndChild();
+    }
+
+private:
+    static ImVec4 colorFor(logsys::Level level) {
+        switch (level) {
+        case logsys::Level::Warning: return ImVec4(1.0f, 0.82f, 0.22f, 1.0f);
+        case logsys::Level::Error: return ImVec4(1.0f, 0.32f, 0.32f, 1.0f);
+        case logsys::Level::Info: return ImVec4(0.82f, 0.84f, 0.88f, 1.0f);
+        }
+        return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    }
+
+    logsys::Logger& logger_;
+    float height_ = 0.0f;
+    std::unordered_map<std::string, bool> visibleChannels_;
 };
 
 class Window final : public Component {
