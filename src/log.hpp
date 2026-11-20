@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -28,23 +30,50 @@ public:
     }
 
     void registerChannel(std::string channel) {
-        std::scoped_lock lock(mutex_);
-        channels_.insert(std::move(channel));
+        std::function<void()> wakeCallback;
+        {
+            std::scoped_lock lock(mutex_);
+            const bool inserted = channels_.insert(std::move(channel)).second;
+            if (!inserted)
+                return;
+            wakeCallback = wakeCallback_;
+        }
+        if (wakeCallback)
+            wakeCallback();
     }
 
     void write(std::string_view channel, Level level, std::string message) {
-        std::scoped_lock lock(mutex_);
-        channels_.insert(std::string(channel));
-        entries_.push_back({std::string(channel), level, std::move(message)});
+        std::function<void()> wakeCallback;
+        {
+            std::scoped_lock lock(mutex_);
+            channels_.insert(std::string(channel));
+            entries_.push_back({std::string(channel), level, std::move(message)});
+            ++version_;
+            wakeCallback = wakeCallback_;
+        }
+        if (wakeCallback)
+            wakeCallback();
     }
 
     void info(std::string_view channel, std::string message) { write(channel, Level::Info, std::move(message)); }
     void warning(std::string_view channel, std::string message) { write(channel, Level::Warning, std::move(message)); }
     void error(std::string_view channel, std::string message) { write(channel, Level::Error, std::move(message)); }
 
-    std::vector<Entry> entries() const {
+    std::vector<Entry> entries(std::uint64_t* version = nullptr) const {
         std::scoped_lock lock(mutex_);
+        if (version)
+            *version = version_;
         return entries_;
+    }
+
+    std::uint64_t version() const {
+        std::scoped_lock lock(mutex_);
+        return version_;
+    }
+
+    void setWakeCallback(std::function<void()> callback) {
+        std::scoped_lock lock(mutex_);
+        wakeCallback_ = std::move(callback);
     }
 
     std::vector<std::string> channels() const {
@@ -55,14 +84,23 @@ public:
     }
 
     void clear() {
-        std::scoped_lock lock(mutex_);
-        entries_.clear();
+        std::function<void()> wakeCallback;
+        {
+            std::scoped_lock lock(mutex_);
+            entries_.clear();
+            ++version_;
+            wakeCallback = wakeCallback_;
+        }
+        if (wakeCallback)
+            wakeCallback();
     }
 
 private:
     mutable std::mutex mutex_;
     std::unordered_set<std::string> channels_;
     std::vector<Entry> entries_;
+    std::uint64_t version_ = 0;
+    std::function<void()> wakeCallback_;
 };
 
 } // namespace logsys

@@ -6,6 +6,20 @@
 #include "backends/imgui_impl_opengl3.h"
 #include "ui.hpp"
 
+#include <chrono>
+
+namespace {
+using Clock = std::chrono::steady_clock;
+Clock::time_point LastActivity = Clock::now();
+
+void markActivity(GLFWwindow*) { LastActivity = Clock::now(); }
+void markCursorActivity(GLFWwindow*, double, double) { LastActivity = Clock::now(); }
+void markMouseActivity(GLFWwindow*, int, int, int) { LastActivity = Clock::now(); }
+void markScrollActivity(GLFWwindow*, double, double) { LastActivity = Clock::now(); }
+void markKeyActivity(GLFWwindow*, int, int, int, int) { LastActivity = Clock::now(); }
+void markCharacterActivity(GLFWwindow*, unsigned int) { LastActivity = Clock::now(); }
+} // namespace
+
 int main()
 {
     if (!glfwInit())
@@ -34,10 +48,21 @@ int main()
     ImGui::CreateContext();
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
+    // Install application callbacks first so the ImGui backend can chain them.
+    glfwSetWindowRefreshCallback(window, markActivity);
+    glfwSetFramebufferSizeCallback(window, [](GLFWwindow* source, int, int) { markActivity(source); });
+    glfwSetWindowPosCallback(window, [](GLFWwindow* source, int, int) { markActivity(source); });
+    glfwSetWindowFocusCallback(window, [](GLFWwindow* source, int) { markActivity(source); });
+    glfwSetCursorPosCallback(window, markCursorActivity);
+    glfwSetMouseButtonCallback(window, markMouseActivity);
+    glfwSetScrollCallback(window, markScrollActivity);
+    glfwSetKeyCallback(window, markKeyActivity);
+    glfwSetCharCallback(window, markCharacterActivity);
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 410");
 
     auto& logger = logsys::Logger::instance();
+    logger.setWakeCallback([] { glfwPostEmptyEvent(); });
     logger.registerChannel("FileLoading");
     logger.registerChannel("ShaderCompilation");
     logger.registerChannel("ShaderParameters");
@@ -64,7 +89,8 @@ int main()
     settings.add<ui::Text>("Renderer and shader parameters");
     settings.add<ui::Separator>();
     settings.add<ui::InputText>("Shader name", "basic.vert");
-    settings.add<ui::Checkbox>("Enable VSync", true);
+    auto& vsyncCheckbox = settings.add<ui::Checkbox>("Enable VSync", true);
+    bool vsyncEnabled = true;
     settings.add<ui::RadioButton>("OpenGL", selectedRenderer, 0);
     settings.add<ui::RadioButton>("Vulkan", selectedRenderer, 1);
     settings.add<ui::ComboBox>("Renderer", std::vector<std::string>{"OpenGL", "Vulkan", "Software"}, &selectedRenderer);
@@ -79,10 +105,14 @@ int main()
     outputWindow.add<ui::LogView>(logger);
 
     bool defaultLayoutBuilt = false;
+    constexpr auto ActiveDuration = std::chrono::milliseconds(250);
+    constexpr double ActiveFrameSeconds = 1.0 / 60.0;
+    constexpr double IdleWaitSeconds = 0.25;
 
     while (!glfwWindowShouldClose(window))
     {
-        glfwPollEvents();
+        const bool active = Clock::now() - LastActivity < ActiveDuration;
+        glfwWaitEventsTimeout(active ? ActiveFrameSeconds : IdleWaitSeconds);
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -95,6 +125,10 @@ int main()
         }
         resourcesWindow.draw();
         settingsWindow.draw();
+        if (vsyncCheckbox.checked() != vsyncEnabled) {
+            vsyncEnabled = vsyncCheckbox.checked();
+            glfwSwapInterval(vsyncEnabled ? 1 : 0);
+        }
         viewportWindow.draw();
         outputWindow.draw();
 
@@ -102,13 +136,16 @@ int main()
         int displayWidth = 0;
         int displayHeight = 0;
         glfwGetFramebufferSize(window, &displayWidth, &displayHeight);
-        glViewport(0, 0, displayWidth, displayHeight);
-        glClearColor(0.10f, 0.12f, 0.15f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        glfwSwapBuffers(window);
+        if (displayWidth > 0 && displayHeight > 0) {
+            glViewport(0, 0, displayWidth, displayHeight);
+            glClearColor(0.10f, 0.12f, 0.15f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            glfwSwapBuffers(window);
+        }
     }
 
+    logger.setWakeCallback({});
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

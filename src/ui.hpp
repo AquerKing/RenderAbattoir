@@ -257,15 +257,13 @@ public:
         const float viewHeight = height_ > 0.0f ? height_ : ImGui::GetContentRegionAvail().y;
         ImGui::BeginChild("##log-editor", ImVec2(0.0f, viewHeight), true, ImGuiWindowFlags_HorizontalScrollbar);
         const bool atBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
-        const auto entries = logger_.entries();
-        visibleText_.clear();
-        styledLines_.clear();
-        for (const auto& entry : entries) {
-            if (!visibleChannels_[entry.channel])
-                continue;
-
-            const std::string line = "[" + entry.channel + "] " + entry.message;
-            appendStyledText(line, colorFor(entry.level));
+        const std::uint64_t logVersion = logger_.version();
+        if (cacheDirty_ || cachedLogVersion_ != logVersion) {
+            std::uint64_t snapshotVersion = 0;
+            const auto entries = logger_.entries(&snapshotVersion);
+            rebuildText(entries);
+            cachedLogVersion_ = snapshotVersion;
+            cacheDirty_ = false;
         }
         drawSelectableText();
         if (atBottom)
@@ -278,6 +276,16 @@ private:
         std::string text;
         ImVec4 color;
     };
+
+    void rebuildText(const std::vector<logsys::Entry>& entries) {
+        visibleText_.clear();
+        styledLines_.clear();
+        for (const auto& entry : entries) {
+            if (!visibleChannels_[entry.channel])
+                continue;
+            appendStyledText("[" + entry.channel + "] " + entry.message, colorFor(entry.level));
+        }
+    }
 
     void appendStyledText(const std::string& text, const ImVec4& color) {
         std::size_t lineStart = 0;
@@ -344,15 +352,18 @@ private:
         bool toggleAll = allVisible;
         if (someVisible)
             ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, true);
-        if (ImGui::Checkbox("All", &toggleAll))
+        if (ImGui::Checkbox("All", &toggleAll)) {
             for (const auto& channel : channels)
                 visibleChannels_[channel] = toggleAll;
+            cacheDirty_ = true;
+        }
         if (someVisible)
             ImGui::PopItemFlag();
 
         ImGui::Separator();
         for (const auto& channel : channels)
-            ImGui::Checkbox(channel.c_str(), &visibleChannels_[channel]);
+            if (ImGui::Checkbox(channel.c_str(), &visibleChannels_[channel]))
+                cacheDirty_ = true;
         ImGui::EndCombo();
     }
 
@@ -370,6 +381,8 @@ private:
     std::unordered_map<std::string, bool> visibleChannels_;
     std::string visibleText_;
     std::vector<StyledLine> styledLines_;
+    std::uint64_t cachedLogVersion_ = 0;
+    bool cacheDirty_ = true;
 };
 
 class Window final : public Component {
