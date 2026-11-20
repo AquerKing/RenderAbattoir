@@ -17,6 +17,45 @@ public:
     virtual void draw() = 0;
 };
 
+// A reusable child container. Nested containers let a composite control own
+// arbitrary widgets without exposing raw ImGui calls at its call site.
+class VerticalLayout final : public Component {
+public:
+    template <typename T, typename... Args>
+    T& add(Args&&... args) {
+        auto component = std::make_unique<T>(std::forward<Args>(args)...);
+        T& result = *component;
+        children_.push_back(std::move(component));
+        return result;
+    }
+
+    void draw() override {
+        for (const auto& child : children_)
+            child->draw();
+    }
+
+private:
+    std::vector<std::unique_ptr<Component>> children_;
+};
+
+// Creates the application's root dockspace. Call draw() once per frame before
+// drawing dockable Window objects.
+class DockSpace final : public Component {
+public:
+    explicit DockSpace(ImGuiDockNodeFlags flags = ImGuiDockNodeFlags_PassthruCentralNode)
+        : flags_(flags) {}
+
+    void draw() override {
+        id_ = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), flags_);
+    }
+
+    ImGuiID id() const { return id_; }
+
+private:
+    ImGuiDockNodeFlags flags_;
+    ImGuiID id_ = 0;
+};
+
 class Text final : public Component {
 public:
     explicit Text(std::string value) : value_(std::move(value)) {}
@@ -175,6 +214,17 @@ private:
 class Window final : public Component {
 public:
     explicit Window(std::string title) : title_(std::move(title)) {}
+
+    Window& setInitialDock(ImGuiID dockId) {
+        initialDockId_ = dockId;
+        return *this;
+    }
+
+    Window& setOpen(bool* open) {
+        open_ = open;
+        return *this;
+    }
+
     template <typename T, typename... Args> T& add(Args&&... args) {
         auto component = std::make_unique<T>(std::forward<Args>(args)...);
         T& result = *component;
@@ -182,13 +232,17 @@ public:
         return result;
     }
     void draw() override {
-        if (!ImGui::Begin(title_.c_str())) { ImGui::End(); return; }
+        if (initialDockId_ != 0)
+            ImGui::SetNextWindowDockID(initialDockId_, ImGuiCond_FirstUseEver);
+        if (!ImGui::Begin(title_.c_str(), open_)) { ImGui::End(); return; }
         for (const auto& child : children_) child->draw();
         ImGui::End();
     }
 private:
     std::string title_;
     std::vector<std::unique_ptr<Component>> children_;
+    ImGuiID initialDockId_ = 0;
+    bool* open_ = nullptr;
 };
 
 } // namespace ui

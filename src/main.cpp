@@ -32,6 +32,7 @@ int main()
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 410");
@@ -39,21 +40,28 @@ int main()
     int selectedRenderer = 0;
     int selectedItem = 0;
     std::vector<bool> selectedChannels{true, false, false};
-    ui::Window demoWindow("Render Abattoir");
-    demoWindow.add<ui::Text>("A small reusable ImGui component demo");
-    demoWindow.add<ui::Separator>();
-    demoWindow.add<ui::InputText>("Shader name", "basic.vert");
-    demoWindow.add<ui::Checkbox>("Enable VSync", true);
-    demoWindow.add<ui::RadioButton>("OpenGL", selectedRenderer, 0);
-    demoWindow.add<ui::RadioButton>("Vulkan", selectedRenderer, 1);
-    demoWindow.add<ui::ComboBox>("Renderer", std::vector<std::string>{"OpenGL", "Vulkan", "Software"}, &selectedRenderer);
-    demoWindow.add<ui::ComboBox>("Channels", std::vector<std::string>{"Color", "Depth", "Normals"}, &selectedChannels);
-    demoWindow.add<ui::ListView>("Render targets", std::vector<std::string>{"Color", "Depth", "Normals"}, &selectedItem);
-    demoWindow.add<ui::TreeView>(std::vector<ui::TreeView::Node>{
+    ui::DockSpace dockSpace;
+
+    ui::Window controlsWindow("Controls");
+    auto& controls = controlsWindow.add<ui::VerticalLayout>();
+    controls.add<ui::Text>("A small reusable ImGui component demo");
+    controls.add<ui::Separator>();
+    controls.add<ui::InputText>("Shader name", "basic.vert");
+    controls.add<ui::Checkbox>("Enable VSync", true);
+    controls.add<ui::RadioButton>("OpenGL", selectedRenderer, 0);
+    controls.add<ui::RadioButton>("Vulkan", selectedRenderer, 1);
+    controls.add<ui::ComboBox>("Renderer", std::vector<std::string>{"OpenGL", "Vulkan", "Software"}, &selectedRenderer);
+    controls.add<ui::ComboBox>("Channels", std::vector<std::string>{"Color", "Depth", "Normals"}, &selectedChannels);
+
+    ui::Window sceneWindow("Scene");
+    sceneWindow.add<ui::TreeView>(std::vector<ui::TreeView::Node>{
         {"Scene", {{"Camera", {}}, {"Mesh", {}}}},
         {"Shaders", {{"Vertex", {}}, {"Fragment", {}}}},
     });
-    demoWindow.add<ui::RenderViewport>("Viewport", [](ImVec2) {
+    sceneWindow.add<ui::ListView>("Render targets", std::vector<std::string>{"Color", "Depth", "Normals"}, &selectedItem);
+
+    ui::Window viewportWindow("Viewport");
+    viewportWindow.add<ui::RenderViewport>("Viewport Canvas", [](ImVec2) {
         ImGui::TextUnformatted("Render viewport placeholder");
     });
 
@@ -65,7 +73,10 @@ int main()
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        demoWindow.draw();
+        dockSpace.draw();
+        controlsWindow.setInitialDock(dockSpace.id()).draw();
+        sceneWindow.setInitialDock(dockSpace.id()).draw();
+        viewportWindow.setInitialDock(dockSpace.id()).draw();
 
         ImGui::Render();
         int displayWidth = 0;
