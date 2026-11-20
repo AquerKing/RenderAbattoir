@@ -5,6 +5,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 #include "ui.hpp"
+#include "shader_compiler.hpp"
 
 #include <chrono>
 
@@ -69,8 +70,13 @@ int main()
     logger.info("FileLoading", "Log system initialized; no resources have been loaded yet.");
     logger.warning("ShaderCompilation", "No shader program is selected for compilation.");
     logger.info("ShaderParameters", "No shader parameters have been applied.");
+    render::OpenGLShaderCompiler shaderCompiler;
+    if (!shaderCompiler.initialize())
+        logger.error("ShaderCompilation", "Failed to initialize the OpenGL shader API.");
+    render::OpenGLViewportRenderer viewportRenderer;
+    if (!viewportRenderer.initialize())
+        logger.error("Rendering", "Failed to initialize the OpenGL viewport renderer.");
 
-    int selectedRenderer = 0;
     int selectedItem = 0;
     std::vector<bool> selectedChannels{true, false, false};
     ui::DockSpace dockSpace;
@@ -85,21 +91,11 @@ int main()
     });
 
     ui::Window settingsWindow("Render Settings");
-    auto& settings = settingsWindow.add<ui::VerticalLayout>();
-    settings.add<ui::Text>("Renderer and shader parameters");
-    settings.add<ui::Separator>();
-    settings.add<ui::InputText>("Shader name", "basic.vert");
-    auto& vsyncCheckbox = settings.add<ui::Checkbox>("Enable VSync", true);
-    bool vsyncEnabled = true;
-    settings.add<ui::RadioButton>("OpenGL", selectedRenderer, 0);
-    settings.add<ui::RadioButton>("Vulkan", selectedRenderer, 1);
-    settings.add<ui::ComboBox>("Renderer", std::vector<std::string>{"OpenGL", "Vulkan", "Software"}, &selectedRenderer);
-    settings.add<ui::ComboBox>("Channels", std::vector<std::string>{"Color", "Depth", "Normals"}, &selectedChannels);
+    settingsWindow.add<ui::RenderSettings>(shaderCompiler, logger,
+        [](bool enabled) { glfwSwapInterval(enabled ? 1 : 0); });
 
     ui::Window viewportWindow("Viewport");
-    viewportWindow.add<ui::RenderViewport>("Viewport Canvas", [](ImVec2) {
-        ImGui::TextUnformatted("Render viewport placeholder");
-    });
+    viewportWindow.add<ui::RenderViewport>("Viewport Canvas", viewportRenderer, shaderCompiler);
 
     ui::Window outputWindow("Output");
     outputWindow.add<ui::LogView>(logger);
@@ -125,10 +121,6 @@ int main()
         }
         resourcesWindow.draw();
         settingsWindow.draw();
-        if (vsyncCheckbox.checked() != vsyncEnabled) {
-            vsyncEnabled = vsyncCheckbox.checked();
-            glfwSwapInterval(vsyncEnabled ? 1 : 0);
-        }
         viewportWindow.draw();
         outputWindow.draw();
 
@@ -140,12 +132,15 @@ int main()
             glViewport(0, 0, displayWidth, displayHeight);
             glClearColor(0.10f, 0.12f, 0.15f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
+
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             glfwSwapBuffers(window);
         }
     }
 
     logger.setWakeCallback({});
+    viewportRenderer.reset();
+    shaderCompiler.reset();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

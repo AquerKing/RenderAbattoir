@@ -3,11 +3,14 @@
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder currently lives in Dear ImGui's docking internals.
 #include "log.hpp"
+#include "shader_compiler.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cfloat>
 #include <functional>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -226,17 +229,127 @@ private:
 
 class RenderViewport final : public Component {
 public:
-    using DrawCallback = std::function<void(ImVec2)>;
-    RenderViewport(std::string label, DrawCallback callback) : label_(std::move(label)), callback_(std::move(callback)) {}
+    RenderViewport(std::string label, render::OpenGLViewportRenderer& renderer,
+                   render::OpenGLShaderCompiler& compiler)
+        : label_(std::move(label)), renderer_(renderer), compiler_(compiler) {}
     void draw() override {
-        const ImVec2 size = ImGui::GetContentRegionAvail();
-        ImGui::BeginChild(label_.c_str(), ImVec2(0.0f, 220.0f), true, ImGuiWindowFlags_NoScrollbar);
-        if (callback_) callback_(size);
+        ImGui::BeginChild(label_.c_str(), ImVec2(0.0f, 0.0f), true,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        position_ = ImGui::GetCursorScreenPos();
+        size_ = ImGui::GetContentRegionAvail();
+        ImGui::GetWindowDrawList()->AddCallback(drawCallback, this);
+        ImGui::GetWindowDrawList()->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+        ImGui::InvisibleButton("##viewport-canvas", size_);
         ImGui::EndChild();
     }
 private:
+    static void drawCallback(const ImDrawList*, const ImDrawCmd* command) {
+        auto* self = static_cast<RenderViewport*>(command->UserCallbackData);
+        const ImGuiIO& io = ImGui::GetIO();
+        const int displayHeight = static_cast<int>(io.DisplaySize.y * io.DisplayFramebufferScale.y);
+        const int x = static_cast<int>(self->position_.x * io.DisplayFramebufferScale.x);
+        const int y = displayHeight - static_cast<int>(
+            (self->position_.y + self->size_.y) * io.DisplayFramebufferScale.y);
+        self->renderer_.render(
+            self->compiler_.program(), x, y,
+            static_cast<int>(self->size_.x * io.DisplayFramebufferScale.x),
+            static_cast<int>(self->size_.y * io.DisplayFramebufferScale.y));
+    }
+
     std::string label_;
-    DrawCallback callback_;
+    render::OpenGLViewportRenderer& renderer_;
+    render::OpenGLShaderCompiler& compiler_;
+    ImVec2 position_;
+    ImVec2 size_;
+};
+
+class RenderSettings final : public Component {
+public:
+    RenderSettings(render::OpenGLShaderCompiler& compiler, logsys::Logger& logger,
+                   std::function<void(bool)> onVsyncChanged)
+        : compiler_(compiler), logger_(logger), onVsyncChanged_(std::move(onVsyncChanged)) {}
+
+    void draw() override {
+        ImGui::TextUnformatted("Shader Program");
+        ImGui::Separator();
+        ImGui::TextUnformatted("Vertex Shader");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##vertex-shader-path", vertexPath_.data(), vertexPath_.size());
+        ImGui::TextUnformatted("Fragment Shader");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##fragment-shader-path", fragmentPath_.data(), fragmentPath_.size());
+
+        refreshSources();
+        const bool canCompile = compiler_.initialized() && vertexLoaded_ && fragmentLoaded_ &&
+                                (!hasAttempt_ || vertexSource_ != attemptedVertexSource_ ||
+                                 fragmentSource_ != attemptedFragmentSource_ ||
+                                 vertexPath_.data() != attemptedVertexPath_ ||
+                                 fragmentPath_.data() != attemptedFragmentPath_);
+        ImGui::BeginDisabled(!canCompile);
+        if (ImGui::Button("Compile"))
+            compile();
+        ImGui::EndDisabled();
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Rendering");
+        ImGui::Separator();
+        if (ImGui::BeginCombo("Rendering API", "OpenGL")) {
+            ImGui::Selectable("OpenGL", true);
+            ImGui::EndCombo();
+        }
+        if (ImGui::Checkbox("Vertical Sync", &vsyncEnabled_) && onVsyncChanged_)
+            onVsyncChanged_(vsyncEnabled_);
+    }
+
+private:
+    static bool readFile(const char* path, std::string& contents) {
+        if (path[0] == '\0') {
+            contents.clear();
+            return false;
+        }
+        std::ifstream file(path, std::ios::binary);
+        if (!file) {
+            contents.clear();
+            return false;
+        }
+        contents.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        return true;
+    }
+
+    void refreshSources() {
+        vertexLoaded_ = readFile(vertexPath_.data(), vertexSource_);
+        fragmentLoaded_ = readFile(fragmentPath_.data(), fragmentSource_);
+    }
+
+    void compile() {
+        attemptedVertexPath_ = vertexPath_.data();
+        attemptedFragmentPath_ = fragmentPath_.data();
+        attemptedVertexSource_ = vertexSource_;
+        attemptedFragmentSource_ = fragmentSource_;
+        hasAttempt_ = true;
+
+        const render::ShaderCompileResult result = compiler_.compile(vertexSource_, fragmentSource_);
+        if (result.success)
+            logger_.info("ShaderCompilation", result.message);
+        else
+            logger_.error("ShaderCompilation", result.message);
+    }
+
+    render::OpenGLShaderCompiler& compiler_;
+    logsys::Logger& logger_;
+    std::function<void(bool)> onVsyncChanged_;
+    std::array<char, 1024> vertexPath_{};
+    std::array<char, 1024> fragmentPath_{};
+    std::string vertexSource_;
+    std::string fragmentSource_;
+    std::string attemptedVertexPath_;
+    std::string attemptedFragmentPath_;
+    std::string attemptedVertexSource_;
+    std::string attemptedFragmentSource_;
+    bool vertexLoaded_ = false;
+    bool fragmentLoaded_ = false;
+    bool hasAttempt_ = false;
+    bool vsyncEnabled_ = true;
 };
 
 // A read-only, scrollable rich text view. All entries share one child window,

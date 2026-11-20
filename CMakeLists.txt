@@ -15,6 +15,7 @@ add_executable(
 
     # Source files
     "src/main.cpp"
+    "src/shader_compiler.cpp"
     "${IMGUI_DIR}/imgui.cpp"
     "${IMGUI_DIR}/imgui_draw.cpp"
     "${IMGUI_DIR}/imgui_tables.cpp"
@@ -26,6 +27,7 @@ add_executable(
 target_include_directories(render_abbattoir PRIVATE
     "${IMGUI_DIR}"
     "${IMGUI_DIR}/backends"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/glfw/deps"
 )
 
 target_link_libraries(render_abbattoir PRIVATE glfw OpenGL::GL)
