@@ -258,21 +258,75 @@ public:
         ImGui::BeginChild("##log-editor", ImVec2(0.0f, viewHeight), true, ImGuiWindowFlags_HorizontalScrollbar);
         const bool atBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
         const auto entries = logger_.entries();
+        visibleText_.clear();
+        styledLines_.clear();
         for (const auto& entry : entries) {
             if (!visibleChannels_[entry.channel])
                 continue;
 
-            ImGui::PushStyleColor(ImGuiCol_Text, colorFor(entry.level));
             const std::string line = "[" + entry.channel + "] " + entry.message;
-            ImGui::TextUnformatted(line.data(), line.data() + line.size());
-            ImGui::PopStyleColor();
+            appendStyledText(line, colorFor(entry.level));
         }
+        drawSelectableText();
         if (atBottom)
             ImGui::SetScrollHereY(1.0f);
         ImGui::EndChild();
     }
 
 private:
+    struct StyledLine {
+        std::string text;
+        ImVec4 color;
+    };
+
+    void appendStyledText(const std::string& text, const ImVec4& color) {
+        std::size_t lineStart = 0;
+        while (lineStart <= text.size()) {
+            const std::size_t lineEnd = text.find('\n', lineStart);
+            styledLines_.push_back({text.substr(lineStart, lineEnd - lineStart), color});
+            if (!visibleText_.empty())
+                visibleText_ += '\n';
+            visibleText_ += styledLines_.back().text;
+            if (lineEnd == std::string::npos)
+                break;
+            lineStart = lineEnd + 1;
+        }
+    }
+
+    void drawSelectableText() {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float lineHeight = ImGui::GetTextLineHeight();
+        float textWidth = 0.0f;
+        for (const auto& line : styledLines_)
+            textWidth = std::max(textWidth, ImGui::CalcTextSize(line.text.c_str()).x);
+
+        const ImVec2 textSize(
+            std::max(ImGui::GetContentRegionAvail().x, textWidth + style.FramePadding.x * 2.0f),
+            std::max(lineHeight + style.FramePadding.y * 2.0f,
+                     lineHeight * static_cast<float>(styledLines_.size()) + style.FramePadding.y * 2.0f));
+        const ImVec2 widgetPosition = ImGui::GetCursorScreenPos();
+
+        const ImVec4 transparent(0.0f, 0.0f, 0.0f, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, transparent);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, transparent);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, transparent);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, transparent);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+        ImGui::InputTextMultiline("##selectable-log-text", visibleText_.data(), visibleText_.size() + 1,
+                                  textSize, ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
+
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImVec2 linePosition(widgetPosition.x + style.FramePadding.x,
+                            widgetPosition.y + style.FramePadding.y);
+        for (const auto& line : styledLines_) {
+            drawList->AddText(linePosition, ImGui::ColorConvertFloat4ToU32(line.color),
+                              line.text.data(), line.text.data() + line.text.size());
+            linePosition.y += lineHeight;
+        }
+    }
+
     void drawFilter(const std::vector<std::string>& channels) {
         const auto visibleCount = static_cast<std::size_t>(std::count_if(
             channels.begin(), channels.end(),
@@ -314,6 +368,8 @@ private:
     logsys::Logger& logger_;
     float height_ = 0.0f;
     std::unordered_map<std::string, bool> visibleChannels_;
+    std::string visibleText_;
+    std::vector<StyledLine> styledLines_;
 };
 
 class Window final : public Component {
