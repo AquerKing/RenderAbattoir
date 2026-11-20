@@ -239,44 +239,32 @@ private:
     DrawCallback callback_;
 };
 
-// A read-only, scrollable log editor. A Child window is used instead of
-// InputTextMultiline because ImGui's text input cannot color individual lines.
+// A read-only, scrollable rich text view. All entries share one child window,
+// while each entry can still provide its own text color and multiline content.
 class LogView final : public Component {
 public:
     explicit LogView(logsys::Logger& logger, float height = 0.0f)
         : logger_(logger), height_(height) {}
 
     void draw() override {
-        // Channel controls are kept in the view, so producers never need to
-        // know which messages the user has chosen to hide.
         const auto channels = logger_.channels();
-        for (std::size_t i = 0; i < channels.size(); ++i) {
-            const auto& channel = channels[i];
-            auto [it, inserted] = visibleChannels_.try_emplace(channel, true);
-            if (i != 0)
-                ImGui::SameLine();
-            ImGui::Checkbox(channel.c_str(), &it->second);
-        }
+        for (const auto& channel : channels)
+            visibleChannels_.try_emplace(channel, true);
+
+        drawFilter(channels);
         ImGui::Separator();
 
         const float viewHeight = height_ > 0.0f ? height_ : ImGui::GetContentRegionAvail().y;
         ImGui::BeginChild("##log-editor", ImVec2(0.0f, viewHeight), true, ImGuiWindowFlags_HorizontalScrollbar);
         const bool atBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
         const auto entries = logger_.entries();
-        for (std::size_t i = 0; i < entries.size(); ++i) {
-            const auto& entry = entries[i];
+        for (const auto& entry : entries) {
             if (!visibleChannels_[entry.channel])
                 continue;
 
-            // ReadOnly InputTextMultiline provides a real caret and native
-            // text selection while the per-entry color preserves log levels.
-            std::string line = "[" + entry.channel + "] " + entry.message;
-            const float lineCount = 1.0f + static_cast<float>(std::count(line.begin(), line.end(), '\n'));
             ImGui::PushStyleColor(ImGuiCol_Text, colorFor(entry.level));
-            ImGui::InputTextMultiline(("##log-entry-" + std::to_string(i)).c_str(),
-                                      line.data(), line.size() + 1,
-                                      ImVec2(-FLT_MIN, lineCount * ImGui::GetTextLineHeightWithSpacing()),
-                                      ImGuiInputTextFlags_ReadOnly);
+            const std::string line = "[" + entry.channel + "] " + entry.message;
+            ImGui::TextUnformatted(line.data(), line.data() + line.size());
             ImGui::PopStyleColor();
         }
         if (atBottom)
@@ -285,6 +273,35 @@ public:
     }
 
 private:
+    void drawFilter(const std::vector<std::string>& channels) {
+        const auto visibleCount = static_cast<std::size_t>(std::count_if(
+            channels.begin(), channels.end(),
+            [this](const std::string& channel) { return visibleChannels_[channel]; }));
+        const bool allVisible = !channels.empty() && visibleCount == channels.size();
+        const bool someVisible = visibleCount > 0 && !allVisible;
+        const std::string preview = allVisible
+            ? "All"
+            : std::to_string(visibleCount) + " of " + std::to_string(channels.size());
+
+        ImGui::SetNextItemWidth(180.0f);
+        if (!ImGui::BeginCombo("Filter", preview.c_str()))
+            return;
+
+        bool toggleAll = allVisible;
+        if (someVisible)
+            ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, true);
+        if (ImGui::Checkbox("All", &toggleAll))
+            for (const auto& channel : channels)
+                visibleChannels_[channel] = toggleAll;
+        if (someVisible)
+            ImGui::PopItemFlag();
+
+        ImGui::Separator();
+        for (const auto& channel : channels)
+            ImGui::Checkbox(channel.c_str(), &visibleChannels_[channel]);
+        ImGui::EndCombo();
+    }
+
     static ImVec4 colorFor(logsys::Level level) {
         switch (level) {
         case logsys::Level::Warning: return ImVec4(1.0f, 0.82f, 0.22f, 1.0f);
